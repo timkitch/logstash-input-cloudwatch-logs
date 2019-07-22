@@ -49,6 +49,9 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
   # Valid options are: `beginning`, `end`, or an integer, representing number of
   # seconds before now to read back from.
   config :start_position, :default => 'beginning'
+  
+  # If set, must be valid integer. Denotes number of seconds to look back in the past for events.
+  config :lookback_duration, :validate => :number, :default => nil
 
 
   # def register
@@ -58,6 +61,8 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
     @logger.debug("Registering cloudwatch_logs input", :log_group => @log_group)
     settings = defined?(LogStash::SETTINGS) ? LogStash::SETTINGS : nil
     @sincedb = {}
+      
+    @logger.debug("lookback_duration", :lookback_duration => @lookback_duration)
 
     check_start_position_validity
 
