@@ -62,7 +62,7 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
     settings = defined?(LogStash::SETTINGS) ? LogStash::SETTINGS : nil
     @sincedb = {}
       
-    @logger.debug("lookback_duration", :lookback_duration => @lookback_duration)
+    #@logger.debug("lookback_duration", :lookback_duration => @lookback_duration)
 
     check_start_position_validity
 
