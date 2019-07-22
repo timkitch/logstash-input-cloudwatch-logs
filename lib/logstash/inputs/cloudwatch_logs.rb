@@ -121,6 +121,12 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
 
     while !stop?
       begin
+        
+        @num_events_processed = 0
+        
+        @start_run = (Time.now.to_f.round(3)*1000).to_i
+        @logger.debug("starting up, ready to fetch events", :start_run => @start_run)
+        
         groups = find_log_groups
 
         groups.each do |group|
@@ -130,6 +136,11 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
       rescue Aws::CloudWatchLogs::Errors::ThrottlingException
         @logger.warn("reached rate limit")
       end
+      
+      stop_run = (Time.now.to_f.round(3)*1000).to_i
+      @logger.debug("finished processing loop at #{stop_run}")
+      
+      @num_events_processed = 0
 
       Stud.stoppable_sleep(@interval) { stop? }
     end
@@ -203,11 +214,26 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
       
       @logger.debug("writing next start_time to .sincedb file", :next_start => @sincedb[group])
 
-      _sincedb_write
+      # TODO this cannot work, even if we only incremented by 1 nanosecond. Problem is: event was generated in BETWEEN first and last event,
+      # but that event was not yet visible during a given run. Any solution other than going BACK in time next poll will result
+      # in a miss on that event forever.
+      if @lookback_duration.nil?
+        _sincedb_write
+      else
+        @logger.debug("lookback_duration set, so NOT using event timestamp")
+      end
 
       next_token = resp.next_token
       break if next_token.nil?
     end
+    
+    if @lookback_duration
+      next_start = @start_run - @lookback_duration
+      @sincedb[group] = next_start
+      @logger.debug("storing lookback_duration as next start_time #{next_start}")
+      _sincedb_write
+    end
+    
     @priority.delete(group)
     @priority << group
   end #def process_group
@@ -227,11 +253,13 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
       @queue << event
       
       @logger.debug("placed event on pipeline queue with event_id/ingestion_time: #{log.event_id}/#{log.ingestion_time}")
+          
+      if @lookback_duration.nil?
+        @sincedb[group] = log.timestamp + 1
+      end
       
-      # TODO this cannot work, even if we only incremented by 1 nanosecond. Problem is: event was generated in BETWEEN first and last event,
-      # but that event was not yet visible during a given run. Any solution other than going BACK in time next poll will result
-      # in a miss on that event forever.
-      @sincedb[group] = log.timestamp + 1
+    @num_events_processed += 1
+      
     end
   end # def process_log
 
