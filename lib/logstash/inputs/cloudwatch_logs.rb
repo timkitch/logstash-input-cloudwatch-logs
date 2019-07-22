@@ -139,6 +139,7 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
       
       stop_run = (Time.now.to_f.round(3)*1000).to_i
       @logger.debug("finished processing loop at #{stop_run}")
+      @logger.debug("total processed events during run", :num_events_processed => @num_events_processed)
       
       @num_events_processed = 0
 
