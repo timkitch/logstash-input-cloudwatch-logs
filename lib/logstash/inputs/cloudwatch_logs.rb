@@ -123,7 +123,7 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
           process_group(group)
         end # groups.each
       rescue Aws::CloudWatchLogs::Errors::ThrottlingException
-        @logger.debug("reached rate limit")
+        @logger.warn("reached rate limit")
       end
 
       Stud.stoppable_sleep(@interval) { stop? }
@@ -189,11 +189,14 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
           :interleaved => true,
           :next_token => next_token
       }
+      @logger.debug("calling filter_log_events with start_time", :start => @sincedb[group])
       resp = @cloudwatch.filter_log_events(params)
 
       resp.events.each do |event|
         process_log(event, group)
       end
+      
+      @logger.debug("writing next start_time to .sincedb file", :next_start => @sincedb[group])
 
       _sincedb_write
 
@@ -217,6 +220,12 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
       decorate(event)
 
       @queue << event
+      
+      @logger.debug("placed event on pipeline queue with event_id/ingestion_time: #{log.event_id}/#{log.ingestion_time}")
+      
+      # TODO this cannot work, even if we only incremented by 1 nanosecond. Problem is: event was generated in BETWEEN first and last event,
+      # but that event was not yet visible during a given run. Any solution other than going BACK in time next poll will result
+      # in a miss on that event forever.
       @sincedb[group] = log.timestamp + 1
     end
   end # def process_log
