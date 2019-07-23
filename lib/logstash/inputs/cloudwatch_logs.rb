@@ -49,9 +49,9 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
   # Valid options are: `beginning`, `end`, or an integer, representing number of
   # seconds before now to read back from.
   config :start_position, :default => 'beginning'
-  
+
   # If set, must be valid integer. Denotes number of seconds to look back in the past for events.
-  config :lookback_duration, :validate => :number, :default => nil 
+  config :lookback_duration, :validate => :number, :default => nil
 
 
   # def register
@@ -61,7 +61,7 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
     @logger.debug("Registering cloudwatch_logs input", :log_group => @log_group)
     settings = defined?(LogStash::SETTINGS) ? LogStash::SETTINGS : nil
     @sincedb = {}
-      
+
     @logger.debug("lookback_duration", :lookback_duration => @lookback_duration)
 
     check_start_position_validity
@@ -121,16 +121,16 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
 
     while !stop?
       begin
-        
+
         @num_events_processed = 0
-        
-        current_time = DateTime.now
-        @logger.debug("starting events processing loop", :current_time => current_time.strftime('%T.%3N'))
-        
+
+        loop_start_time = DateTime.now
+        @logger.debug("starting events processing loop", :loop_start_time => loop_start_time.strftime('%T.%3N'))
+
         # We want to ensure we keep time to milliseconds granularity
-        @start_run = dt.strftime('%Q').to_i
+        @start_run = loop_start_time.strftime('%Q').to_i
         @logger.debug("setting @start_run time", :start_run => @start_run)
-        
+
         groups = find_log_groups
         @logger.debug("list of log groups to process #{groups}")
 
@@ -141,11 +141,13 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
       rescue Aws::CloudWatchLogs::Errors::ThrottlingException
         @logger.warn("reached rate limit")
       end
-      
-      current_time = DateTime.now
-      @logger.debug("finished events processing loop", :current_time => current_time.strftime('%T.%3N'))
-      @logger.debug("total processed events during run", :num_events_processed => @num_events_processed)
-      
+
+      loop_end_time = DateTime.now
+      @logger.debug("finished events processing loop", :loop_end_time => loop_end_time.strftime('%T.%3N'))
+      total_loop_elapsed_time = ((loop_end_time.strftime('%Q').to_f - loop_start_time.strftime('%Q').to_f) / 1000).round(3)
+      @logger.debug("total number of seconds to complete loop", :total_loop_elapsed_time => total_loop_elapsed_time)
+      @logger.debug("total processed events during loop", :num_events_processed => @num_events_processed)
+
       @num_events_processed = 0
 
       Stud.stoppable_sleep(@interval) { stop? }
@@ -196,8 +198,9 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
         end # case @start_position
       end
     end
-    
-    @logger.debug("bootstrapping after restart with log start position", :start_position => Time.strptime(sincedb[group].to_s,'%Q'))
+
+    @logger.debug("bootstrapping after restart with log group/start position #{sincedb}")
+
   end # def determine_start_position
 
   private
@@ -213,35 +216,48 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
           :interleaved => true,
           :next_token => next_token
       }
-      @logger.debug("calling filter_log_events with start_time", :start => @sincedb[group])
+      @logger.debug("calling filter_log_events with start_time", :start => convert_timestamp_for_display(@sincedb[group]))
+
       resp = @cloudwatch.filter_log_events(params)
 
       resp.events.each do |event|
         process_log(event, group)
       end
-      
-      @logger.debug("writing next start_time to .sincedb file", :next_start => @sincedb[group])
 
-      # TODO this cannot work, even if we only incremented by 1 nanosecond. Problem is: event was generated in BETWEEN first and last event,
-      # but that event was not yet visible during a given run. Any solution other than going BACK in time next poll will result
-      # in a miss on that event forever.
+      # If lookback_duration option is set, we will not use the timestamps of events.
+      # Instead, we'll calculate the value to save after we've  processed all events.
       if @lookback_duration.nil?
+        @logger.debug("writing next start_time from event timestamp to .sincedb file", :next_start => convert_timestamp_for_display(@sincedb[group]))
         _sincedb_write
       else
         @logger.debug("lookback_duration set, so NOT using event timestamp")
       end
 
       next_token = resp.next_token
+
+      @logger.debug("finished processing set of events", :next_start => convert_timestamp_for_display(@sincedb[group]))
+
+      if next_token.nil?
+        @logger.debug("next_token is nil - we've reached the end of the event set for the current processing period")
+      else
+        @logger.debug("next_token is not nil - going back to get next set of events...")
+      end
+
       break if next_token.nil?
     end
-    
+
     if @lookback_duration
+      # Calculate value to save into .sincedb based on the the time we started the current processing loop,
+      # minus the "lookback" - effectively, we'll revisit a period of time equal to the value
+      # of the "lookback_duration" next time we call "filter_log_events". This gives us a sliding window,
+      # with overlap between processing loops. The purpose is to ensure we eventually pick up events
+      # that are delayed within CloudWatch - e.g. due to CloudWatch's "eventually consistent" read model.
       next_start = @start_run - @lookback_duration
       @sincedb[group] = next_start
-      @logger.debug("storing lookback_duration as next start_time #{next_start}")
+      @logger.debug("saving next start_time value, based on lookback_duration", :next_start => convert_timestamp_for_display(@sincedb[group]))
       _sincedb_write
     end
-    
+
     @priority.delete(group)
     @priority << group
   end #def process_group
@@ -259,15 +275,15 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
       decorate(event)
 
       @queue << event
-      
-      @logger.debug("placed event on pipeline queue with event_id/ingestion_time: #{log.event_id}/#{log.ingestion_time}")
-          
+
+      @logger.debug("placed event on pipeline queue", :event_id => log.event_id, :ingestion_time => convert_timestamp_for_display(log.ingestion_time))
+
       if @lookback_duration.nil?
         @sincedb[group] = log.timestamp + 1
       end
-      
+
     @num_events_processed += 1
-      
+
     end
   end # def process_log
 
@@ -311,5 +327,10 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
     @sincedb.map do |group, pos|
       [group, pos].join(" ")
     end.join("\n") + "\n"
+  end
+
+  private
+  def convert_timestamp_for_display(timestamp)
+    formatted_time = Time.strptime(timestamp.to_s,'%Q').strftime('%T.%3N')
   end
 end # class LogStash::Inputs::CloudWatch_Logs
