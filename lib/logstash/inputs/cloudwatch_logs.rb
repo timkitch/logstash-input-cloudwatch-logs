@@ -118,7 +118,6 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
     @priority = []
     _sincedb_open
     determine_start_position(find_log_groups, @sincedb)
-    @logger.debug("bootstrapping after restart with log start position", :start_position => Time.strptime(@sincedb[group].to_s,'%Q'))
 
     while !stop?
       begin
@@ -133,6 +132,7 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
         @logger.debug("setting @start_run time", :start_run => @start_run)
         
         groups = find_log_groups
+        @logger.debug("list of log groups to process #{groups}")
 
         groups.each do |group|
           @logger.debug("calling process_group on #{group}")
@@ -196,6 +196,8 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
         end # case @start_position
       end
     end
+    
+    @logger.debug("bootstrapping after restart with log start position", :start_position => Time.strptime(sincedb[group].to_s,'%Q'))
   end # def determine_start_position
 
   private
