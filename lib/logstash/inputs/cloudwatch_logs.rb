@@ -118,14 +118,19 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
     @priority = []
     _sincedb_open
     determine_start_position(find_log_groups, @sincedb)
+    @logger.debug("bootstrapping after restart with log start position", :start_position => Time.strptime(@sincedb[group].to_s,'%Q'))
 
     while !stop?
       begin
         
         @num_events_processed = 0
         
-        @start_run = (Time.now.to_f.round(3)*1000).to_i
-        @logger.debug("starting up, ready to fetch events", :start_run => @start_run)
+        current_time = DateTime.now
+        @logger.debug("starting events processing loop", :current_time => current_time.strftime('%T.%3N'))
+        
+        # We want to ensure we keep time to milliseconds granularity
+        @start_run = dt.strftime('%Q').to_i
+        @logger.debug("setting @start_run time", :start_run => @start_run)
         
         groups = find_log_groups
 
@@ -137,8 +142,8 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
         @logger.warn("reached rate limit")
       end
       
-      stop_run = (Time.now.to_f.round(3)*1000).to_i
-      @logger.debug("finished processing loop at #{stop_run}")
+      current_time = DateTime.now
+      @logger.debug("finished events processing loop", :current_time => current_time.strftime('%T.%3N'))
       @logger.debug("total processed events during run", :num_events_processed => @num_events_processed)
       
       @num_events_processed = 0
