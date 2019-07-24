@@ -252,7 +252,9 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
       # of the "lookback_duration" next time we call "filter_log_events". This gives us a sliding window,
       # with overlap between processing loops. The purpose is to ensure we eventually pick up events
       # that are delayed within CloudWatch - e.g. due to CloudWatch's "eventually consistent" read model.
-      next_start = @start_run - @lookback_duration
+      next_start = @start_run - (@lookback_duration * 1000)
+      @logger.debug("calculating next_start. raw values...", :start_run => @start_run, :lookback_duration => @lookback_duration, :next_start => next_start)
+      @logger.debug("calculating next_start. converted values...", :start_run => convert_timestamp_for_display(@start_run), :lookback_duration => @lookback_duration, :next_start => convert_timestamp_for_display(next_start))
       @sincedb[group] = next_start
       @logger.debug("saving next start_time value, based on lookback_duration", :next_start => convert_timestamp_for_display(@sincedb[group]))
       _sincedb_write
