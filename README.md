@@ -23,6 +23,7 @@ and ingest all logs available in all of the matching groups.
 | log_group | string or Array of strings | Yes | |
 | log_group_prefix | boolean | No | `false` |
 | start_position | `beginning`, `end`, or an Integer | No | `beginning` |
+| lookback_duration | number | No | nil
 | sincedb_path | string | No | `$HOME/.sincedb*` |
 | interval | number | No | 60 |
 | aws_credentials_file | string | No | |
@@ -43,6 +44,34 @@ Valid options for `start_position` are:
 * `end` - Sets the sincedb to now, and reads any new messages going forward
 * Integer - Number of seconds in the past to begin reading at
 
+#### `lookback_duration`
+If set, the `lookback_duration` setting allows you to specify a window of time
+you want the plugin to revisit during each processing loop. The purpose of this
+is to ensure that no CloudWatch events are missed due to the "eventually
+consistent read" nature of CloudWatch. Without this setting, the plugin always
+calls the CloudWatch "filter_log_events" API with a "start_time" value equal
+to the CloudWatch timestamp of the last event it processed at the end of the
+previous "filter_log_events" call, plus 1 millisecond. In that case, the call
+would not pick up any CloudWatch events whose timestamp is within the previously
+visited time window, but had not yet become visible, due to the read consistency
+issue. When using this setting, the plugin will subtract its value from the
+time at which it started processing for the current interval and store that
+value in the sincedb file as the next "start_time" to be used for the next
+interval.
+
+Note that, while setting this to a value just large enough to account for
+CloudWatch's consistency delays (for most cases, 60 should be more than
+sufficient) will protect against missed events, you will need to apply a
+strategy within your Logstash inputs pipeline to de-duplicate events, since the
+plugin will process some events more than once. This is a necessary trade-off
+between guaranteed delivery of all events and dealing with duplicate events and
+additional consumer-side volume. Using a small value for this setting may turn
+out to be a reasonable compromise in such cases.
+
+Valid options for `lookback_duration` are:
+* Integer - Number of seconds in the past to revisit during each
+"filter_log_events" API call
+
 #### Logstash Default config params
 Other standard logstash parameters are available such as:
 * `add_field`
@@ -54,7 +83,7 @@ Other standard logstash parameters are available such as:
     input {
         cloudwatch_logs {
             log_group => [ "/aws/lambda/my-lambda" ]
-            access_key_id => "AKIAXXXXXX" 
+            access_key_id => "AKIAXXXXXX"
             secret_access_key => "SECRET"
         }
     }
