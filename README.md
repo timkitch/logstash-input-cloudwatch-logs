@@ -23,7 +23,7 @@ and ingest all logs available in all of the matching groups.
 | log_group | string or Array of strings | Yes | |
 | log_group_prefix | boolean | No | `false` |
 | start_position | `beginning`, `end`, or an Integer | No | `beginning` |
-| lookback_duration | number | No | nil
+| lookback_duration | number | No | 
 | sincedb_path | string | No | `$HOME/.sincedb*` |
 | interval | number | No | 60 |
 | aws_credentials_file | string | No | |
