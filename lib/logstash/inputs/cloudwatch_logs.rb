@@ -58,23 +58,31 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
   public
   def register
     require "digest/md5"
-    @logger.debug("Registering cloudwatch_logs input", :log_group => @log_group)
+    @logger.debug("[" + @log_group.join(",") + "] Registering cloudwatch_logs input", :log_group => @log_group)
     settings = defined?(LogStash::SETTINGS) ? LogStash::SETTINGS : nil
     @sincedb = {}
 
-    @logger.debug("lookback_duration", :lookback_duration => @lookback_duration)
+    @logger.debug("[" + @log_group.join(",") + "] lookback_duration", :lookback_duration => @lookback_duration)
 
     check_start_position_validity
 
     Aws::ConfigService::Client.new(aws_options_hash)
     @cloudwatch = Aws::CloudWatchLogs::Client.new(aws_options_hash)
 
+    # TLK 08/05/2019
+    @log_group_md5 = Digest::MD5.hexdigest(@log_group.join(","))
+    @logger.debug("[" + @log_group.join(",") + "] Generated log_group_md5 for .sincedb file", :log_group_md5 => @log_group_md5)
+
     if @sincedb_path.nil?
       if settings
         datapath = File.join(settings.get_value("path.data"), "plugins", "inputs", "cloudwatch_logs")
         # Ensure that the filepath exists before writing, since it's deeply nested.
         FileUtils::mkdir_p datapath
-        @sincedb_path = File.join(datapath, ".sincedb_" + Digest::MD5.hexdigest(@log_group.join(",")))
+
+        # TLK 08/05/2019
+        @sincedb_path = File.join(datapath, ".sincedb_" + @log_group_md5)
+
+        #@sincedb_path = File.join(datapath, ".sincedb_" + Digest::MD5.hexdigest(@log_group.join(",")))
       end
     end
 
@@ -125,28 +133,28 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
         @num_events_processed = 0
 
         loop_start_time = DateTime.now
-        @logger.debug("starting events processing loop", :loop_start_time => loop_start_time.strftime('%T.%3N'))
+        @logger.debug("[" + @log_group.join(",") + "] starting events processing loop", :loop_start_time => loop_start_time.strftime('%T.%3N'))
 
         # We want to ensure we keep time to milliseconds granularity
         @start_run = loop_start_time.strftime('%Q').to_i
-        @logger.debug("setting @start_run time", :start_run => @start_run)
+        @logger.debug("[" + @log_group.join(",") + "] setting @start_run time", :start_run => @start_run)
 
         groups = find_log_groups
-        @logger.debug("list of log groups to process #{groups}")
+        @logger.debug("[" + @log_group.join(",") + "] list of log groups to process #{groups}")
 
         groups.each do |group|
-          @logger.debug("calling process_group on #{group}")
+          @logger.debug("[" + @log_group.join(",") + "] calling process_group on #{group}")
           process_group(group)
         end # groups.each
       rescue Aws::CloudWatchLogs::Errors::ThrottlingException
-        @logger.warn("reached rate limit")
+        @logger.warn("[" + @log_group.join(",") + "] reached rate limit")
       end
 
       loop_end_time = DateTime.now
-      @logger.debug("finished events processing loop", :loop_end_time => loop_end_time.strftime('%T.%3N'))
+      @logger.debug("[" + @log_group.join(",") + "] finished events processing loop", :loop_end_time => loop_end_time.strftime('%T.%3N'))
       total_loop_elapsed_time = ((loop_end_time.strftime('%Q').to_f - loop_start_time.strftime('%Q').to_f) / 1000).round(3)
-      @logger.debug("total number of seconds to complete loop", :total_loop_elapsed_time => total_loop_elapsed_time)
-      @logger.debug("total processed events during loop", :num_events_processed => @num_events_processed)
+      @logger.debug("[" + @log_group.join(",") + "] total number of seconds to complete loop", :total_loop_elapsed_time => total_loop_elapsed_time)
+      @logger.debug("[" + @log_group.join(",") + "] total processed events during loop", :num_events_processed => @num_events_processed)
 
       @num_events_processed = 0
 
@@ -157,7 +165,7 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
   public
   def find_log_groups
     if @log_group_prefix
-      @logger.debug("log_group prefix is enabled, searching for log groups")
+      @logger.debug("[" + @log_group.join(",") + "] log_group prefix is enabled, searching for log groups")
       groups = []
       next_token = nil
       @log_group.each do |group|
@@ -165,12 +173,12 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
           log_groups = @cloudwatch.describe_log_groups(log_group_name_prefix: group, next_token: next_token)
           groups += log_groups.log_groups.map {|n| n.log_group_name}
           next_token = log_groups.next_token
-          @logger.debug("found #{log_groups.log_groups.length} log groups matching prefix #{group}")
+          @logger.debug("[" + @log_group.join(",") + "] found #{log_groups.log_groups.length} log groups matching prefix #{group}")
           break if next_token.nil?
         end
       end
     else
-      @logger.debug("log_group_prefix not enabled")
+      @logger.debug("[" + @log_group.join(",") + "] log_group_prefix not enabled")
       groups = @log_group
     end
     # Move the most recent groups to the end
@@ -199,7 +207,7 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
       end
     end
 
-    @logger.debug("bootstrapping after restart with log group/start position #{sincedb}")
+    @logger.debug("[" + @log_group.join(",") + "] bootstrapping after restart with log group/start position #{sincedb}")
 
   end # def determine_start_position
 
@@ -216,7 +224,7 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
           :interleaved => true,
           :next_token => next_token
       }
-      @logger.debug("calling filter_log_events with start_time", :start => convert_timestamp_for_display(@sincedb[group]))
+      @logger.debug("[" + @log_group.join(",") + "] calling filter_log_events with start_time", :start => convert_timestamp_for_display(@sincedb[group]))
 
       resp = @cloudwatch.filter_log_events(params)
 
@@ -227,20 +235,20 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
       # If lookback_duration option is set, we will not use the timestamps of events.
       # Instead, we'll calculate the value to save after we've  processed all events.
       if @lookback_duration.nil?
-        @logger.debug("writing next start_time from event timestamp to .sincedb file", :next_start => convert_timestamp_for_display(@sincedb[group]))
+        @logger.debug("[" + @log_group.join(",") + "] writing next start_time from event timestamp to .sincedb file", :next_start => convert_timestamp_for_display(@sincedb[group]))
         _sincedb_write
       else
-        @logger.debug("lookback_duration set, so NOT using event timestamp")
+        @logger.debug("[" + @log_group.join(",") + "] lookback_duration set, so NOT using event timestamp")
       end
 
       next_token = resp.next_token
 
-      @logger.debug("finished processing set of events", :next_start => convert_timestamp_for_display(@sincedb[group]))
+      @logger.debug("[" + @log_group.join(",") + "] finished processing set of events", :next_start => convert_timestamp_for_display(@sincedb[group]))
 
       if next_token.nil?
-        @logger.debug("next_token is nil - we've reached the end of the event set for the current processing period")
+        @logger.debug("[" + @log_group.join(",") + "] next_token is nil - we've reached the end of the event set for the current processing period")
       else
-        @logger.debug("next_token is not nil - going back to get next set of events...")
+        @logger.debug("[" + @log_group.join(",") + "] next_token is not nil - going back to get next set of events...")
       end
 
       break if next_token.nil?
@@ -253,10 +261,10 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
       # with overlap between processing loops. The purpose is to ensure we eventually pick up events
       # that are delayed within CloudWatch - e.g. due to CloudWatch's "eventually consistent" read model.
       next_start = @start_run - (@lookback_duration * 1000)
-      @logger.debug("calculating next_start. raw values...", :start_run => @start_run, :lookback_duration => @lookback_duration, :next_start => next_start)
-      @logger.debug("calculating next_start. converted values...", :start_run => convert_timestamp_for_display(@start_run), :lookback_duration => @lookback_duration, :next_start => convert_timestamp_for_display(next_start))
+      @logger.debug("[" + @log_group.join(",") + "] calculating next_start. raw values...", :start_run => @start_run, :lookback_duration => @lookback_duration, :next_start => next_start)
+      @logger.debug("[" + @log_group.join(",") + "] calculating next_start. converted values...", :start_run => convert_timestamp_for_display(@start_run), :lookback_duration => @lookback_duration, :next_start => convert_timestamp_for_display(next_start))
       @sincedb[group] = next_start
-      @logger.debug("saving next start_time value, based on lookback_duration", :next_start => convert_timestamp_for_display(@sincedb[group]))
+      @logger.debug("[" + @log_group.join(",") + "] saving next start_time value, based on lookback_duration", :next_start => convert_timestamp_for_display(@sincedb[group]))
       _sincedb_write
     end
 
@@ -278,7 +286,7 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
 
       @queue << event
 
-      @logger.debug("placed event on pipeline queue", :event_id => log.event_id, :ingestion_time => convert_timestamp_for_display(log.ingestion_time))
+      @logger.debug("[" + @log_group.join(",") + "] placed event on pipeline queue", :event_id => log.event_id, :ingestion_time => convert_timestamp_for_display(log.ingestion_time))
 
       if @lookback_duration.nil?
         @sincedb[group] = log.timestamp + 1
@@ -299,16 +307,16 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
   def _sincedb_open
     begin
       File.open(@sincedb_path) do |db|
-        @logger.debug? && @logger.debug("_sincedb_open: reading from #{@sincedb_path}")
+        @logger.debug? && @logger.debug("[" + @log_group.join(",") + "] _sincedb_open: reading from #{@sincedb_path}")
         db.each do |line|
           group, pos = line.split(" ", 2)
-          @logger.debug? && @logger.debug("_sincedb_open: setting #{group} to #{pos.to_i}")
+          @logger.debug? && @logger.debug("[" + @log_group.join(",") + "] _sincedb_open: setting #{group} to #{pos.to_i}")
           @sincedb[group] = pos.to_i
         end
       end
     rescue
       #No existing sincedb to load
-      @logger.debug? && @logger.debug("_sincedb_open: error: #{@sincedb_path}: #{$!}")
+      @logger.debug? && @logger.debug("[" + @log_group.join(",") + "] _sincedb_open: error: #{@sincedb_path}: #{$!}")
     end
   end # def _sincedb_open
 
@@ -319,7 +327,7 @@ class LogStash::Inputs::CloudWatch_Logs < LogStash::Inputs::Base
     rescue Errno::EACCES
       # probably no file handles free
       # maybe it will work next time
-      @logger.debug? && @logger.debug("_sincedb_write: error: #{@sincedb_path}: #{$!}")
+      @logger.debug? && @logger.debug("[" + @log_group.join(",") + "] _sincedb_write: error: #{@sincedb_path}: #{$!}")
     end
   end # def _sincedb_write
 
